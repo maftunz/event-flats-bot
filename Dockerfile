@@ -36,5 +36,7 @@ RUN pip install --no-index --find-links /wheels event-flats-bot \
 USER bot
 WORKDIR /home/bot
 
-# Run as a module so `python -m event_flats_bot` keeps working
-ENTRYPOINT ["python", "-m", "event_flats_bot"]
+# No fixed ENTRYPOINT — the same image runs either bot. Pick one with
+# `command: ["python", "-m", "event_flats_bot.admin"]` or `.client` in
+# your compose file / k8s manifest.
+CMD ["python", "-m", "event_flats_bot.client"]

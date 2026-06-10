@@ -1,8 +1,15 @@
 # event-flats-bot
 
-Telegram bot for end customers. Skeleton without LLM — uses a step-by-step
-FSM (rooms → district → price → results) and calls the Event Flats backend
-under a service-account JWT.
+Two Telegram bots that share a code base:
+
+| Bot                  | Audience  | Job                                        | Entrypoint                       |
+|----------------------|-----------|--------------------------------------------|----------------------------------|
+| `event-flats-admin-bot`  | staff   | Opens the admin WebApp via menu button     | `python -m event_flats_bot.admin`  |
+| `event-flats-client-bot` | clients | Natural-language search powered by OpenAI  | `python -m event_flats_bot.client` |
+
+They share the Laravel backend client (`event_flats_bot.core.backend`)
+and a common `.env` — namespaced via `ADMIN_*` / `CLIENT_*` / `OPENAI_*`
+prefixes so the two never collide.
 
 ## Local run
 
@@ -10,34 +17,60 @@ under a service-account JWT.
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env  # then fill BOT_TOKEN from @BotFather
-python -m event_flats_bot
+cp .env.example .env
+
+# Fill in:
+#   ADMIN_BOT_TOKEN, ADMIN_WEBAPP_URL
+#   CLIENT_BOT_TOKEN, OPENAI_API_KEY
+#   BACKEND_URL, BACKEND_LOGIN, BACKEND_PASSWORD
 ```
 
-The bot expects the Event Flats backend to be reachable at `BACKEND_URL`
-(default `http://127.0.0.1:8000/api/v1`) and logs in as the service
-account defined in `BACKEND_LOGIN` / `BACKEND_PASSWORD`.
+Then in two terminals:
+
+```bash
+python -m event_flats_bot.admin     # admin bot
+python -m event_flats_bot.client    # client bot
+```
+
+(Or run them both via `docker compose up`.)
 
 ## Layout
 
 ```
 src/event_flats_bot/
-├── __main__.py       — entrypoint, builds the Bot/Dispatcher
-├── config.py         — pydantic-settings loaded from env / .env
-├── api/backend.py    — async httpx client around /api/v1, manages the JWT
-├── services/search.py — extract_criteria() stub (LLM goes here later)
-├── keyboards/search.py — inline keyboards
-└── handlers/
-    ├── start.py      — /start, /help, "About"
-    └── search.py     — FSM-driven search flow
+├── core/
+│   ├── backend.py       — async httpx wrapper over /api/v1
+│   └── settings.py      — BaseBotSettings (backend creds + log level)
+├── admin/
+│   ├── __main__.py      — admin bot polling loop
+│   ├── settings.py      — AdminSettings (ADMIN_BOT_TOKEN, ADMIN_WEBAPP_URL)
+│   └── handlers/menu.py — /start /admin /help, all forwarded to the WebApp
+└── client/
+    ├── __main__.py      — client bot polling loop
+    ├── settings.py      — ClientSettings (CLIENT_BOT_TOKEN, OPENAI_*)
+    ├── llm.py           — OpenAI structured-output dialog brain
+    └── handlers/chat.py — free-text → LLM → search or clarify
 ```
 
-## Adding the LLM later
+## How the client bot thinks
 
-`services.search.extract_criteria` is the seam. Replace its body with a
-provider call (OpenAI / Anthropic) that returns a `SearchCriteria`. The
-`search` handler will call it on free-text messages and skip ahead in the
-FSM when the LLM filled fields in.
+Every user message hits `LLMService.next_turn(history, districts, accumulated)`,
+which returns one of:
 
-The provider choice was deferred — see the project plan in
-`event-flats-backend`.
+- `{action: "ask", message: "..."}` — needs more info, the message is the
+  next clarifying question
+- `{action: "search", message: "...", criteria: {...}}` — has enough; the
+  bot calls `/api/v1/flats?...` with the criteria and sends back up to 5
+  cards
+
+The response is enforced via OpenAI Structured Outputs
+(`response_format: json_schema, strict: true`) so we never have to parse
+free text.
+
+## Swapping the LLM provider
+
+`LLMService` only depends on OpenAI's chat-completions interface. To point
+at Azure OpenAI, an OpenAI-compatible gateway, or a self-hosted vLLM,
+set `OPENAI_BASE_URL` in `.env`. To swap in Anthropic or Gemini, replace
+the `_client.chat.completions.create` call in `client/llm.py` — the rest
+of the bot doesn't care.

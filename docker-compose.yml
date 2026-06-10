@@ -1,17 +1,20 @@
-# Standalone compose for the bot only.
-# Expects the backend to be reachable at BACKEND_URL (defaults to the
-# host machine's gateway; override for production).
+# Two bots from one image: same Dockerfile, different command + env vars.
+# Override BACKEND_URL for production (point at the real backend host).
 
 services:
-  bot:
+  admin-bot:
     build: .
     restart: unless-stopped
-    environment:
-      BOT_TOKEN: ${BOT_TOKEN}
-      BACKEND_URL: ${BACKEND_URL:-http://host.docker.internal:8080/api/v1}
-      BACKEND_LOGIN: ${BACKEND_LOGIN:-admin@eventflats.uz}
-      BACKEND_PASSWORD: ${BACKEND_PASSWORD}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    command: ["python", "-m", "event_flats_bot.admin"]
+    env_file: .env
     extra_hosts:
-      # Lets Linux containers reach the host machine via host.docker.internal
+      # Lets Linux containers reach the host backend via host.docker.internal
+      - "host.docker.internal:host-gateway"
+
+  client-bot:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "event_flats_bot.client"]
+    env_file: .env
+    extra_hosts:
       - "host.docker.internal:host-gateway"
